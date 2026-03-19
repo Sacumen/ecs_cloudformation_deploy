@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Amazon MSK (Managed Kafka) Cluster for SacuNxt ECS Deployment'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: sacunxt
+    Description: Project name for resource naming
+  
+  KafkaVersion:
+    Type: String
+    Default: 3.5.1
+    Description: Apache Kafka version
+    AllowedValues:
+      - 3.5.1
+      - 3.4.0
+      - 3.3.2
+      - 2.8.1
+  
+  BrokerInstanceType:
+    Type: String
+    Default: kafka.t3.small
+    Description: MSK broker instance type
+    AllowedValues:
+      - kafka.t3.small
+      - kafka.m5.large
+      - kafka.m5.xlarge
+      - kafka.m5.2xlarge
+  
+  NumberOfBrokerNodes:
+    Type: Number
+    Default: 2
+    Description: Number of broker nodes (must be multiple of AZs)
+    MinValue: 2
+    MaxValue: 6
+  
+  VolumeSize:
+    Type: Number
+    Default: 100
+    Description: EBS volume size per broker (GB)
+    MinValue: 1
+    MaxValue: 16384
+
+Resources:
+  # MSK Configuration
+  MSKConfiguration:
+    Type: AWS::MSK::Configuration
+    Properties:
+      Name: !Sub ${ProjectName}-msk-config
+      Description: Configuration for SacuNxt MSK cluster
+      KafkaVersionsList:
+        - !Ref KafkaVersion
+      ServerProperties: |
+        auto.create.topics.enable=true
+        delete.topic.enable=true
+        log.retention.hours=168
+        log.segment.bytes=1073741824
+        num.partitions=3
+        default.replication.factor=2
+        min.insync.replicas=1
+        unclean.leader.election.enable=false
+        compression.type=producer
+
+  # CloudWatch Log Group for MSK
+  MSKLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/msk/${ProjectName}
+      RetentionInDays: 7
+
+  # MSK Cluster
+  MSKCluster:
+    Type: AWS::MSK::Cluster
+    Properties:
+      ClusterName: !Sub ${ProjectName}-msk-cluster
+      KafkaVersion: !Ref KafkaVersion
+      NumberOfBrokerNodes: !Ref NumberOfBrokerNodes
+      BrokerNodeGroupInfo:
+        InstanceType: !Ref BrokerInstanceType
+        ClientSubnets:
+          - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet1Id
+          - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet2Id
+        SecurityGroups:
+          - Fn::ImportValue: !Sub ${ProjectName}-MSKSecurityGroupId
+        StorageInfo:
+          EBSStorageInfo:
+            VolumeSize: !Ref VolumeSize
+      EncryptionInfo:
+        EncryptionInTransit:
+          ClientBroker: TLS_PLAINTEXT
+          InCluster: true
+        EncryptionAtRest:
+          DataVolumeKMSKeyId: !Ref AWS::NoValue
+      EnhancedMonitoring: DEFAULT
+      ConfigurationInfo:
+        Arn: !GetAtt MSKConfiguration.Arn
+        Revision: 1
+      LoggingInfo:
+        BrokerLogs:
+          CloudWatchLogs:
+            Enabled: true
+            LogGroup: !Ref MSKLogGroup
+      Tags:
+        Name: !Sub ${ProjectName}-msk-cluster
+
+Outputs:
+  MSKClusterArn:
+    Description: ARN of the MSK cluster
+    Value: !Ref MSKCluster
+    Export:
+      Name: !Sub ${ProjectName}-MSKClusterArn
+
+  ZookeeperConnectionString:
+    Description: Zookeeper connection string
+    Value: !GetAtt MSKCluster.ZookeeperConnectString
+    Export:
+      Name: !Sub ${ProjectName}-ZookeeperConnectionString
+
+  BootstrapBrokersTls:
+    Description: Bootstrap brokers string (TLS)
+    Value: !GetAtt MSKCluster.BootstrapBrokerStringTls
+    Export:
+      Name: !Sub ${ProjectName}-BootstrapBrokersTls
+
+  BootstrapBrokersPlaintext:
+    Description: Bootstrap brokers string (Plaintext)
+    Value: !GetAtt MSKCluster.BootstrapBrokerString
+    Export:
+      Name: !Sub ${ProjectName}-BootstrapBrokersPlaintext

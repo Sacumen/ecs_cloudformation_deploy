@@ -1,0 +1,203 @@
+name: CloudFormation ECS Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_deploy:
+        description: 'Type "deploy" to confirm'
+        required: true
+        type: string
+      action:
+        description: 'Deployment action'
+        required: true
+        default: 'create-or-update'
+        type: choice
+        options:
+        - create-or-update
+        - delete
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-permission:
+    runs-on: ubuntu-latest
+    outputs:
+      allowed: ${{ steps.check.outputs.allowed }}
+    steps:
+      - name: Check if user is in SacuNxt-admin team
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: |
+          CURRENT_USER="${{ github.actor }}"
+          ORG="sacumen"
+          TEAM="SacuNxt-admin"
+          
+          echo "Checking if $CURRENT_USER is a member of $ORG/$TEAM team..."
+          
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/orgs/$ORG/teams/$TEAM/memberships/$CURRENT_USER")
+          
+          if [ "$RESPONSE" == "200" ]; then
+            echo "✅ User $CURRENT_USER is a member of $ORG/$TEAM team"
+            echo "allowed=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ User $CURRENT_USER is not a member of $ORG/$TEAM team"
+            echo "❌ Only members of $ORG/$TEAM team can trigger deployments"
+            exit 1
+          fi
+
+      - name: Validate confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm_deploy }}" != "deploy" ]; then
+            echo "❌ Deployment not confirmed. Please type 'deploy' to confirm."
+            exit 1
+          fi
+          echo "✅ Deployment confirmed"
+
+  deploy-infrastructure:
+    needs: check-permission
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy VPC and Networking Stack
+        if: github.event.inputs.action == 'create-or-update'
+        run: |
+          aws cloudformation deploy \
+            --template-file templates/01-vpc-networking.yaml \
+            --stack-name sacunxt-vpc-networking \
+            --parameter-overrides \
+              ProjectName=sacunxt \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Deploy RDS PostgreSQL Stack
+        if: github.event.inputs.action == 'create-or-update'
+        run: |
+          aws cloudformation deploy \
+            --template-file templates/04-rds-postgresql.yaml \
+            --stack-name sacunxt-rds-postgresql \
+            --parameter-overrides \
+              ProjectName=sacunxt \
+              DBUsername=${{ secrets.DB_USERNAME }} \
+              DBPassword=${{ secrets.DB_PASSWORD }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Deploy ElastiCache Redis Stack
+        if: github.event.inputs.action == 'create-or-update'
+        run: |
+          aws cloudformation deploy \
+            --template-file templates/02-elasticache-redis.yaml \
+            --stack-name sacunxt-elasticache-redis \
+            --parameter-overrides \
+              ProjectName=sacunxt \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Deploy Amazon MSK Kafka Stack
+        if: github.event.inputs.action == 'create-or-update'
+        run: |
+          aws cloudformation deploy \
+            --template-file templates/03-msk-kafka.yaml \
+            --stack-name sacunxt-msk-kafka \
+            --parameter-overrides \
+              ProjectName=sacunxt \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Wait for MSK Cluster to be Active
+        if: github.event.inputs.action == 'create-or-update'
+        run: |
+          echo "Waiting for MSK cluster to become active..."
+          aws kafka wait cluster-active --cluster-arn $(aws cloudformation describe-stacks --stack-name sacunxt-msk-kafka --query "Stacks[0].Outputs[?OutputKey=='MSKClusterArn'].OutputValue" --output text) || true
+
+      - name: Deploy ECS Cluster and Services Stack
+        if: github.event.inputs.action == 'create-or-update'
+        run: |
+          aws cloudformation deploy \
+            --template-file templates/05-ecs-cluster-services.yaml \
+            --stack-name sacunxt-ecs-services \
+            --parameter-overrides \
+              ProjectName=sacunxt \
+              DBUsername=${{ secrets.DB_USERNAME }} \
+              DBPassword=${{ secrets.DB_PASSWORD }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Delete Stacks (if action is delete)
+        if: github.event.inputs.action == 'delete'
+        run: |
+          echo "Deleting stacks in reverse order..."
+          
+          aws cloudformation delete-stack --stack-name sacunxt-ecs-services
+          aws cloudformation wait stack-delete-complete --stack-name sacunxt-ecs-services || true
+          
+          aws cloudformation delete-stack --stack-name sacunxt-msk-kafka
+          aws cloudformation wait stack-delete-complete --stack-name sacunxt-msk-kafka || true
+          
+          aws cloudformation delete-stack --stack-name sacunxt-elasticache-redis
+          aws cloudformation wait stack-delete-complete --stack-name sacunxt-elasticache-redis || true
+          
+          aws cloudformation delete-stack --stack-name sacunxt-rds-postgresql
+          aws cloudformation wait stack-delete-complete --stack-name sacunxt-rds-postgresql || true
+          
+          aws cloudformation delete-stack --stack-name sacunxt-vpc-networking
+          aws cloudformation wait stack-delete-complete --stack-name sacunxt-vpc-networking || true
+          
+          echo "✅ All stacks deleted successfully"
+
+      - name: Get Stack Outputs
+        if: github.event.inputs.action == 'create-or-update'
+        run: |
+          echo "## 📊 Stack Outputs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### VPC Stack" >> $GITHUB_STEP_SUMMARY
+          aws cloudformation describe-stacks --stack-name sacunxt-vpc-networking --query "Stacks[0].Outputs" --output table >> $GITHUB_STEP_SUMMARY || true
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### RDS Stack" >> $GITHUB_STEP_SUMMARY
+          aws cloudformation describe-stacks --stack-name sacunxt-rds-postgresql --query "Stacks[0].Outputs" --output table >> $GITHUB_STEP_SUMMARY || true
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Redis Stack" >> $GITHUB_STEP_SUMMARY
+          aws cloudformation describe-stacks --stack-name sacunxt-elasticache-redis --query "Stacks[0].Outputs" --output table >> $GITHUB_STEP_SUMMARY || true
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### MSK Stack" >> $GITHUB_STEP_SUMMARY
+          aws cloudformation describe-stacks --stack-name sacunxt-msk-kafka --query "Stacks[0].Outputs" --output table >> $GITHUB_STEP_SUMMARY || true
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ECS Stack" >> $GITHUB_STEP_SUMMARY
+          aws cloudformation describe-stacks --stack-name sacunxt-ecs-services --query "Stacks[0].Outputs" --output table >> $GITHUB_STEP_SUMMARY || true
+
+      - name: Summary
+        run: |
+          echo "## 🚀 CloudFormation Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Action**: ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: ${{ secrets.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by**: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Project**: SacuNxt ECS Infrastructure with AWS Managed Services" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployed Stacks:" >> $GITHUB_STEP_SUMMARY
+          echo "1. VPC and Networking" >> $GITHUB_STEP_SUMMARY
+          echo "2. RDS PostgreSQL (AWS Managed)" >> $GITHUB_STEP_SUMMARY
+          echo "3. ElastiCache Redis (AWS Managed)" >> $GITHUB_STEP_SUMMARY
+          echo "4. Amazon MSK Kafka (AWS Managed)" >> $GITHUB_STEP_SUMMARY
+          echo "5. ECS Cluster and Microservices" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RDS PostgreSQL Database for SacuNxt ECS Deployment'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: sacunxt
+    Description: Project name for resource naming
+  
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    Description: RDS instance class
+    AllowedValues:
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+      - db.t4g.micro
+      - db.t4g.small
+      - db.t4g.medium
+      - db.m5.large
+      - db.m5.xlarge
+  
+  DBUsername:
+    Type: String
+    Default: sacunxt
+    Description: Database master username
+    NoEcho: true
+  
+  DBPassword:
+    Type: String
+    Default: sacunxt_password
+    Description: Database master password
+    NoEcho: true
+    MinLength: 8
+  
+  DBName:
+    Type: String
+    Default: api_service
+    Description: Initial database name
+  
+  AllocatedStorage:
+    Type: Number
+    Default: 20
+    Description: Allocated storage in GB
+    MinValue: 20
+    MaxValue: 1000
+  
+  BackupRetentionPeriod:
+    Type: Number
+    Default: 7
+    Description: Number of days to retain backups
+    MinValue: 0
+    MaxValue: 35
+
+Resources:
+  # DB Subnet Group
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub ${ProjectName}-db-subnet-group
+      DBSubnetGroupDescription: Subnet group for RDS PostgreSQL
+      SubnetIds:
+        - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet1Id
+        - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet2Id
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-db-subnet-group
+
+  # DB Parameter Group
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: Parameter group for PostgreSQL 15
+      Family: postgres15
+      Parameters:
+        shared_preload_libraries: pg_stat_statements
+        log_statement: all
+        log_min_duration_statement: 1000
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-db-parameter-group
+
+  # RDS PostgreSQL Instance
+  PostgreSQLInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub ${ProjectName}-postgres
+      Engine: postgres
+      EngineVersion: '15.4'
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref AllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBName: !Ref DBName
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - Fn::ImportValue: !Sub ${ProjectName}-RDSSecurityGroupId
+      DBParameterGroupName: !Ref DBParameterGroup
+      BackupRetentionPeriod: !Ref BackupRetentionPeriod
+      PreferredBackupWindow: '03:00-04:00'
+      PreferredMaintenanceWindow: 'sun:04:00-sun:05:00'
+      MultiAZ: false
+      PubliclyAccessible: false
+      EnableCloudwatchLogsExports:
+        - postgresql
+      DeletionProtection: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-postgres
+
+Outputs:
+  DBEndpoint:
+    Description: PostgreSQL database endpoint
+    Value: !GetAtt PostgreSQLInstance.Endpoint.Address
+    Export:
+      Name: !Sub ${ProjectName}-DBEndpoint
+
+  DBPort:
+    Description: PostgreSQL database port
+    Value: !GetAtt PostgreSQLInstance.Endpoint.Port
+    Export:
+      Name: !Sub ${ProjectName}-DBPort
+
+  DBName:
+    Description: Database name
+    Value: !Ref DBName
+    Export:
+      Name: !Sub ${ProjectName}-DBName
+
+  DBConnectionString:
+    Description: PostgreSQL connection string
+    Value: !Sub 
+      - '${Endpoint}:${Port}'
+      - Endpoint: !GetAtt PostgreSQLInstance.Endpoint.Address
+        Port: !GetAtt PostgreSQLInstance.Endpoint.Port
+    Export:
+      Name: !Sub ${ProjectName}-DBConnectionString

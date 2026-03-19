@@ -1,0 +1,108 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'ElastiCache Redis Cluster for SacuNxt ECS Deployment'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: sacunxt
+    Description: Project name for resource naming
+  
+  RedisNodeType:
+    Type: String
+    Default: cache.t3.micro
+    Description: ElastiCache node type
+    AllowedValues:
+      - cache.t3.micro
+      - cache.t3.small
+      - cache.t3.medium
+      - cache.t4g.micro
+      - cache.t4g.small
+      - cache.t4g.medium
+      - cache.m5.large
+      - cache.m5.xlarge
+  
+  RedisEngineVersion:
+    Type: String
+    Default: '7.0'
+    Description: Redis engine version
+  
+  NumCacheNodes:
+    Type: Number
+    Default: 1
+    Description: Number of cache nodes (1 for single node, 2+ for cluster mode)
+    MinValue: 1
+    MaxValue: 6
+
+Resources:
+  # ElastiCache Subnet Group
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Subnet group for Redis cluster
+      SubnetIds:
+        - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet1Id
+        - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet2Id
+      CacheSubnetGroupName: !Sub ${ProjectName}-redis-subnet-group
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-redis-subnet-group
+
+  # ElastiCache Parameter Group
+  RedisParameterGroup:
+    Type: AWS::ElastiCache::ParameterGroup
+    Properties:
+      CacheParameterGroupFamily: redis7
+      Description: Parameter group for Redis 7
+      Properties:
+        maxmemory-policy: allkeys-lru
+        timeout: '300'
+
+  # ElastiCache Replication Group (Redis Cluster)
+  RedisReplicationGroup:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupId: !Sub ${ProjectName}-redis
+      ReplicationGroupDescription: Redis cluster for SacuNxt microservices
+      Engine: redis
+      EngineVersion: !Ref RedisEngineVersion
+      CacheNodeType: !Ref RedisNodeType
+      NumCacheClusters: !Ref NumCacheNodes
+      AutomaticFailoverEnabled: !If [IsMultiNode, true, false]
+      MultiAZEnabled: !If [IsMultiNode, true, false]
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      SecurityGroupIds:
+        - Fn::ImportValue: !Sub ${ProjectName}-RedisSecurityGroupId
+      CacheParameterGroupName: !Ref RedisParameterGroup
+      AtRestEncryptionEnabled: true
+      TransitEncryptionEnabled: false
+      SnapshotRetentionLimit: 5
+      SnapshotWindow: '03:00-05:00'
+      PreferredMaintenanceWindow: 'sun:05:00-sun:07:00'
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-redis-cluster
+
+Conditions:
+  IsMultiNode: !Not [!Equals [!Ref NumCacheNodes, 1]]
+
+Outputs:
+  RedisEndpoint:
+    Description: Redis primary endpoint address
+    Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Address
+    Export:
+      Name: !Sub ${ProjectName}-RedisEndpoint
+
+  RedisPort:
+    Description: Redis port
+    Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Port
+    Export:
+      Name: !Sub ${ProjectName}-RedisPort
+
+  RedisConnectionString:
+    Description: Redis connection string
+    Value: !Sub 
+      - '${Endpoint}:${Port}'
+      - Endpoint: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Address
+        Port: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Port
+    Export:
+      Name: !Sub ${ProjectName}-RedisConnectionString
