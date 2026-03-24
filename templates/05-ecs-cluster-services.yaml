@@ -1,222 +1,173 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'ECS Cluster and Microservices for SacuNxt Deployment'
+Description: 'ECS Cluster and Microservices for SacuNxt Deployment (with ECS Services)'
 
 Parameters:
   ProjectName:
     Type: String
     Default: sacunxt
-    Description: Project name for resource naming
+  
+  PrivateDnsNamespaceName:
+    Type: String
+    Default: sacunxt.local
+    Description: Private DNS namespace for ECS service discovery
   
   ECRRepositoryURL:
     Type: String
-    Default: 102716399460.dkr.ecr.ap-south-1.amazonaws.com/sacunxt
-    Description: ECR repository URL for container images
+    Description: Base ECR repository URL without the service suffix
+
+  TaskExecutionRoleArn:
+    Type: String
+    Description: ECS task execution role ARN
+
+  DBEndpoint:
+    Type: String
+    Description: RDS endpoint
+
+  RedisEndpoint:
+    Type: String
+    Description: Redis endpoint
+
+  KafkaBroker:
+    Type: String
+    Description: Single MSK broker hostname without port (for example b-1.sacunxtmskcluster.91w189.c21.kafka.us-east-1.amazonaws.com)
   
   APIServiceVersion:
     Type: String
     Default: '2.3.4'
-    Description: API Service image version
   
   SchedulerServiceVersion:
     Type: String
     Default: '2.3.4'
-    Description: Scheduler Service image version
   
   ConfigServiceVersion:
     Type: String
     Default: '2.3.2'
-    Description: Config Service image version
   
   CollectorServiceVersion:
     Type: String
     Default: '2.3.13'
-    Description: Collector Service image version
   
   NormalizerServiceVersion:
     Type: String
     Default: '2.3.7'
-    Description: Normalizer Service image version
   
   PublisherServiceVersion:
     Type: String
     Default: '2.3.10'
-    Description: Publisher Service image version
   
   DBUsername:
     Type: String
     Default: sacunxt
-    Description: Database username
     NoEcho: true
   
   DBPassword:
     Type: String
-    Default: sacunxt_password
-    Description: Database password
     NoEcho: true
 
 Resources:
-  # ECS Cluster
+
   ECSCluster:
     Type: AWS::ECS::Cluster
-    Properties:
-      ClusterName: !Sub ${ProjectName}-cluster
-      ClusterSettings:
-        - Name: containerInsights
-          Value: enabled
-      Tags:
-        - Key: Name
-          Value: !Sub ${ProjectName}-ecs-cluster
 
-  # CloudWatch Log Groups
+  APIServiceDiscoveryNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Ref PrivateDnsNamespaceName
+      Vpc:
+        Fn::ImportValue: !Sub ${ProjectName}-VPCId
+      Description: Private DNS namespace for ECS services
+
+  APIServiceDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: api-service
+      NamespaceId: !Ref APIServiceDiscoveryNamespace
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 60
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+
   APIServiceLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /ecs/${ProjectName}/api-service
-      RetentionInDays: 7
+      LogGroupName: !Sub /ecs/${ProjectName}/api-service-${AWS::StackName}
+      RetentionInDays: 14
 
   SchedulerServiceLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /ecs/${ProjectName}/scheduler-service
-      RetentionInDays: 7
+      LogGroupName: !Sub /ecs/${ProjectName}/scheduler-service-${AWS::StackName}
+      RetentionInDays: 14
 
   ConfigServiceLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /ecs/${ProjectName}/config-service
-      RetentionInDays: 7
+      LogGroupName: !Sub /ecs/${ProjectName}/config-service-${AWS::StackName}
+      RetentionInDays: 14
 
   CollectorServiceLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /ecs/${ProjectName}/collector-service
-      RetentionInDays: 7
+      LogGroupName: !Sub /ecs/${ProjectName}/collector-service-${AWS::StackName}
+      RetentionInDays: 14
 
   NormalizerServiceLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /ecs/${ProjectName}/normalizer-service
-      RetentionInDays: 7
+      LogGroupName: !Sub /ecs/${ProjectName}/normalizer-service-${AWS::StackName}
+      RetentionInDays: 14
 
   PublisherServiceLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /ecs/${ProjectName}/publisher-service
-      RetentionInDays: 7
+      LogGroupName: !Sub /ecs/${ProjectName}/publisher-service-${AWS::StackName}
+      RetentionInDays: 14
 
-
-  # IAM Role for ECS Task Execution
-  ECSTaskExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub ${ProjectName}-ecs-task-execution-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-      Tags:
-        - Key: Name
-          Value: !Sub ${ProjectName}-ecs-task-execution-role
-
-  # IAM Role for ECS Tasks
-  ECSTaskRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub ${ProjectName}-ecs-task-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: ecs-exec-policy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - ssmmessages:CreateControlChannel
-                  - ssmmessages:CreateDataChannel
-                  - ssmmessages:OpenControlChannel
-                  - ssmmessages:OpenDataChannel
-                Resource: '*'
-      Tags:
-        - Key: Name
-          Value: !Sub ${ProjectName}-ecs-task-role
-
-  # Service Discovery Namespace
-  ServiceDiscoveryNamespace:
-    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
-    Properties:
-      Name: !Sub ${ProjectName}-cluster
-      Description: Service discovery namespace for ECS cluster
-      Vpc:
-        Fn::ImportValue: !Sub ${ProjectName}-VPCId
-
-  # Service Discovery for API Service
-  APIServiceDiscovery:
-    Type: AWS::ServiceDiscovery::Service
-    Properties:
-      Name: api-service
-      DnsConfig:
-        DnsRecords:
-          - Type: A
-            TTL: 10
-        NamespaceId: !Ref ServiceDiscoveryNamespace
-      HealthCheckCustomConfig:
-        FailureThreshold: 1
-
-  # API Service Task Definition
+  ##########################################
+  # API SERVICE
+  ##########################################
   APIServiceTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: api-service
       NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
+      RequiresCompatibilities: [FARGATE]
       Cpu: '256'
       Memory: '512'
-      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
-      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
       ContainerDefinitions:
         - Name: api-service
           Image: !Sub ${ECRRepositoryURL}/api-service:${APIServiceVersion}
           Essential: true
+          DependsOn:
+            - ContainerName: postgres-proxy
+              Condition: START
+            - ContainerName: kafka-proxy
+              Condition: START
           PortMappings:
             - ContainerPort: 8000
-              Protocol: tcp
           Environment:
             - Name: LOG_LEVEL
               Value: DEBUG
             - Name: DB_HOST
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBEndpoint
+              Value: localhost
             - Name: DB_PORT
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBPort
+              Value: '5432'
             - Name: DB_NAME
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBName
+              Value: api_service
             - Name: DB_USER
               Value: !Ref DBUsername
             - Name: DB_PASSWORD
               Value: !Ref DBPassword
-            - Name: KAFKA_BOOTSTRAP_SERVERS
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
-            - Name: CONSUMER_CLUSTER
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+            - Name: DB_SCHEMA
+              Value: public
+            - Name: SSL_MODE
+              Value: 'true'
             - Name: PRODUCER_CLUSTER
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: localhost:9092
             - Name: INTEGRATION_TOPIC
               Value: integrations
             - Name: ACTION_TOPIC
@@ -226,182 +177,226 @@ Resources:
             Options:
               awslogs-group: !Ref APIServiceLogGroup
               awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: ecs
+              awslogs-stream-prefix: api
+        - Name: postgres-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:5432,fork
+            - !Sub 'TCP:${DBEndpoint}:5432'
+        - Name: redis-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:6379,fork
+            - !Sub 'TCP:${RedisEndpoint}:6379'
+        - Name: kafka-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:9092,fork
+            - !Sub 'TCP:${KafkaBroker}:9092'
 
-  # API Service
   APIService:
     Type: AWS::ECS::Service
-    DependsOn: APIServiceDiscovery
     Properties:
       ServiceName: api-service
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref APIServiceTaskDefinition
       DesiredCount: 1
       LaunchType: FARGATE
-      EnableExecuteCommand: true
       ServiceRegistries:
-        - RegistryArn: !GetAtt APIServiceDiscovery.Arn
+        - RegistryArn: !GetAtt APIServiceDiscoveryService.Arn
       NetworkConfiguration:
         AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
           Subnets:
-            - Fn::ImportValue: !Sub ${ProjectName}-PublicSubnet1Id
-            - Fn::ImportValue: !Sub ${ProjectName}-PublicSubnet2Id
+            - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet1Id
+            - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet2Id
           SecurityGroups:
             - Fn::ImportValue: !Sub ${ProjectName}-ECSTasksSecurityGroupId
-          AssignPublicIp: ENABLED
 
-  # Scheduler Service Task Definition
+  ##########################################
+  # SCHEDULER SERVICE
+  ##########################################
   SchedulerServiceTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: scheduler-service
       NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
+      RequiresCompatibilities: [FARGATE]
       Cpu: '256'
       Memory: '512'
-      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
-      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
       ContainerDefinitions:
         - Name: scheduler-service
           Image: !Sub ${ECRRepositoryURL}/scheduler-service:${SchedulerServiceVersion}
           Essential: true
-          PortMappings:
-            - ContainerPort: 8002
-              Protocol: tcp
+          DependsOn:
+            - ContainerName: postgres-proxy
+              Condition: START
+            - ContainerName: redis-proxy
+              Condition: START
+            - ContainerName: kafka-proxy
+              Condition: START
           Environment:
-            - Name: LOG_LEVEL
-              Value: DEBUG
             - Name: DB_HOST
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBEndpoint
+              Value: localhost
             - Name: DB_PORT
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBPort
-            - Name: DB_NAME
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBName
+              Value: '5432'
             - Name: DB_USER
               Value: !Ref DBUsername
             - Name: DB_PASSWORD
               Value: !Ref DBPassword
+            - Name: DB_NAME
+              Value: api_service
+            - Name: DB_SCHEMA
+              Value: public
+            - Name: SSL_MODE
+              Value: 'true'
             - Name: REDIS_HOST
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-RedisEndpoint
+              Value: localhost
             - Name: REDIS_PORT
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-RedisPort
-            - Name: KAFKA_BOOTSTRAP_SERVERS
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: '6379'
             - Name: CONSUMER_CLUSTER
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: localhost:9092
             - Name: PRODUCER_CLUSTER
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
-            - Name: TZ
-              Value: Asia/Kolkata
-            - Name: SCHEDULER_RETRIES
-              Value: '1'
+              Value: localhost:9092
             - Name: INGESTION_TOPIC
               Value: ingestions
             - Name: JOBS_TOPIC
               Value: jobs
             - Name: RESULT_TOPIC
               Value: results
-            - Name: RECOVER_JOB
-              Value: 'true'
-            - Name: STOP_ON_FAILURE
-              Value: 'false'
+            - Name: JOBS_TOPIC_PARTITION
+              Value: '1'
+            - Name: RESULT_TOPIC_PARTITION
+              Value: '1'
+            - Name: REPLICATION_FACTOR
+              Value: '1'
+            - Name: SCHEDULER_RETRIES
+              Value: '5'
+            - Name: LOG_LEVEL
+              Value: DEBUG
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref SchedulerServiceLogGroup
               awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: ecs
+              awslogs-stream-prefix: scheduler
+        - Name: postgres-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:5432,fork
+            - !Sub 'TCP:${DBEndpoint}:5432'
+        - Name: redis-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:6379,fork
+            - !Sub 'TCP:${RedisEndpoint}:6379'
+        - Name: kafka-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:9092,fork
+            - !Sub 'TCP:${KafkaBroker}:9092'
 
-  # Scheduler Service
   SchedulerService:
     Type: AWS::ECS::Service
     Properties:
       ServiceName: scheduler-service
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref SchedulerServiceTaskDefinition
-      DesiredCount: 3
+      DesiredCount: 1
       LaunchType: FARGATE
-      EnableExecuteCommand: true
       NetworkConfiguration:
         AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
           Subnets:
-            - Fn::ImportValue: !Sub ${ProjectName}-PublicSubnet1Id
-            - Fn::ImportValue: !Sub ${ProjectName}-PublicSubnet2Id
+            - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet1Id
+            - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet2Id
           SecurityGroups:
             - Fn::ImportValue: !Sub ${ProjectName}-ECSTasksSecurityGroupId
-          AssignPublicIp: ENABLED
 
-  # Config Service Task Definition
+  ##########################################
+  # CONFIG SERVICE
+  ##########################################
   ConfigServiceTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: config-service
       NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
+      RequiresCompatibilities: [FARGATE]
       Cpu: '256'
       Memory: '512'
-      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
-      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
       ContainerDefinitions:
         - Name: config-service
           Image: !Sub ${ECRRepositoryURL}/config-service:${ConfigServiceVersion}
           Essential: true
-          PortMappings:
-            - ContainerPort: 8001
-              Protocol: tcp
+          DependsOn:
+            - ContainerName: postgres-proxy
+              Condition: START
+            - ContainerName: redis-proxy
+              Condition: START
+            - ContainerName: kafka-proxy
+              Condition: START
           Environment:
-            - Name: LOG_LEVEL
-              Value: DEBUG
             - Name: DB_HOST
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBEndpoint
+              Value: localhost
             - Name: DB_PORT
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBPort
-            - Name: DB_NAME
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBName
+              Value: '5432'
             - Name: DB_USER
               Value: !Ref DBUsername
             - Name: DB_PASSWORD
               Value: !Ref DBPassword
+            - Name: DB_NAME
+              Value: api_service
+            - Name: DB_SCHEMA
+              Value: public
+            - Name: SSL_MODE
+              Value: 'true'
             - Name: REDIS_HOST
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-RedisEndpoint
+              Value: localhost
             - Name: REDIS_PORT
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-RedisPort
-            - Name: KAFKA_BOOTSTRAP_SERVERS
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: '6379'
             - Name: CONSUMER_CLUSTER
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: localhost:9092
             - Name: PRODUCER_CLUSTER
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: localhost:9092
             - Name: INTEGRATION_TOPIC
               Value: integrations
             - Name: INGESTION_TOPIC
               Value: ingestions
+            - Name: LOG_LEVEL
+              Value: DEBUG
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref ConfigServiceLogGroup
               awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: ecs
+              awslogs-stream-prefix: config
+        - Name: postgres-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:5432,fork
+            - !Sub 'TCP:${DBEndpoint}:5432'
+        - Name: redis-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:6379,fork
+            - !Sub 'TCP:${RedisEndpoint}:6379'
+        - Name: kafka-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:9092,fork
+            - !Sub 'TCP:${KafkaBroker}:9092'
 
-  # Config Service
   ConfigService:
     Type: AWS::ECS::Service
     Properties:
@@ -410,284 +405,306 @@ Resources:
       TaskDefinition: !Ref ConfigServiceTaskDefinition
       DesiredCount: 1
       LaunchType: FARGATE
-      EnableExecuteCommand: true
       NetworkConfiguration:
         AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
           Subnets:
-            - Fn::ImportValue: !Sub ${ProjectName}-PublicSubnet1Id
-            - Fn::ImportValue: !Sub ${ProjectName}-PublicSubnet2Id
+            - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet1Id
+            - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet2Id
           SecurityGroups:
             - Fn::ImportValue: !Sub ${ProjectName}-ECSTasksSecurityGroupId
-          AssignPublicIp: ENABLED
 
-  # Collector Service Task Definition
+  ##########################################
+  # COLLECTOR SERVICE
+  ##########################################
   CollectorServiceTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: collector-service
       NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
+      RequiresCompatibilities: [FARGATE]
       Cpu: '256'
       Memory: '512'
-      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
-      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
       ContainerDefinitions:
         - Name: collector-service
           Image: !Sub ${ECRRepositoryURL}/collector-service:${CollectorServiceVersion}
           Essential: true
-          PortMappings:
-            - ContainerPort: 8003
-              Protocol: tcp
+          DependsOn:
+            - ContainerName: postgres-proxy
+              Condition: START
+            - ContainerName: redis-proxy
+              Condition: START
+            - ContainerName: kafka-proxy
+              Condition: START
           Environment:
-            - Name: LOG_LEVEL
-              Value: DEBUG
             - Name: DB_HOST
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBEndpoint
+              Value: localhost
             - Name: DB_PORT
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBPort
-            - Name: DB_NAME
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBName
+              Value: '5432'
             - Name: DB_USER
               Value: !Ref DBUsername
             - Name: DB_PASSWORD
               Value: !Ref DBPassword
+            - Name: DB_NAME
+              Value: api_service
+            - Name: DB_SCHEMA
+              Value: public
+            - Name: SSL_MODE
+              Value: 'true'
             - Name: REDIS_HOST
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-RedisEndpoint
+              Value: localhost
             - Name: REDIS_PORT
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-RedisPort
-            - Name: KAFKA_BOOTSTRAP_SERVERS
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: '6379'
             - Name: CONSUMER_CLUSTER
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: localhost:9092
             - Name: PRODUCER_CLUSTER
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: localhost:9092
             - Name: MAX_PRODUCE_SIZE
               Value: '20971520'
-            - Name: RAW_DATA_TOPIC
-              Value: source_data
             - Name: JOBS_TOPIC
               Value: jobs
+            - Name: RAW_DATA_TOPIC
+              Value: source_data
             - Name: STATUS_TOPIC
               Value: service_status
             - Name: RAW_DATA_TOPIC_PARTITION
-              Value: '3'
+              Value: '1'
             - Name: STATUS_TOPIC_PARTITION
-              Value: '3'
+              Value: '1'
             - Name: REPLICATION_FACTOR
               Value: '1'
+            - Name: THREAD_COUNT
+              Value: '7'
+            - Name: LOG_LEVEL
+              Value: DEBUG
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref CollectorServiceLogGroup
               awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: ecs
+              awslogs-stream-prefix: collector
+        - Name: postgres-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:5432,fork
+            - !Sub 'TCP:${DBEndpoint}:5432'
+        - Name: redis-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:6379,fork
+            - !Sub 'TCP:${RedisEndpoint}:6379'
+        - Name: kafka-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:9092,fork
+            - !Sub 'TCP:${KafkaBroker}:9092'
 
-  # Collector Service
   CollectorService:
     Type: AWS::ECS::Service
     Properties:
       ServiceName: collector-service
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref CollectorServiceTaskDefinition
-      DesiredCount: 3
+      DesiredCount: 1
       LaunchType: FARGATE
-      EnableExecuteCommand: true
       NetworkConfiguration:
         AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
           Subnets:
-            - Fn::ImportValue: !Sub ${ProjectName}-PublicSubnet1Id
-            - Fn::ImportValue: !Sub ${ProjectName}-PublicSubnet2Id
+            - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet1Id
+            - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet2Id
           SecurityGroups:
             - Fn::ImportValue: !Sub ${ProjectName}-ECSTasksSecurityGroupId
-          AssignPublicIp: ENABLED
 
-  # Normalizer Service Task Definition
+  ##########################################
+  # NORMALIZER SERVICE
+  ##########################################
   NormalizerServiceTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: normalizer-service
       NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
+      RequiresCompatibilities: [FARGATE]
       Cpu: '256'
       Memory: '512'
-      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
-      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
       ContainerDefinitions:
         - Name: normalizer-service
           Image: !Sub ${ECRRepositoryURL}/normalizer-service:${NormalizerServiceVersion}
           Essential: true
-          PortMappings:
-            - ContainerPort: 8004
-              Protocol: tcp
+          DependsOn:
+            - ContainerName: redis-proxy
+              Condition: START
+            - ContainerName: kafka-proxy
+              Condition: START
           Environment:
-            - Name: LOG_LEVEL
-              Value: DEBUG
-            - Name: DB_HOST
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBEndpoint
-            - Name: DB_PORT
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBPort
-            - Name: DB_NAME
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBName
-            - Name: DB_USER
-              Value: !Ref DBUsername
-            - Name: DB_PASSWORD
-              Value: !Ref DBPassword
             - Name: REDIS_HOST
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-RedisEndpoint
+              Value: localhost
             - Name: REDIS_PORT
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-RedisPort
-            - Name: KAFKA_BOOTSTRAP_SERVERS
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: '6379'
             - Name: CONSUMER_CLUSTER
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: localhost:9092
             - Name: PRODUCER_CLUSTER
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: localhost:9092
             - Name: MAX_PRODUCE_SIZE
               Value: '20971520'
             - Name: RAW_DATA_TOPIC
               Value: source_data
-            - Name: RAW_DATA_DLQ_TOPIC
-              Value: source_data_dlq
             - Name: NORMALIZED_DATA_TOPIC
               Value: normalized_data
             - Name: STATUS_TOPIC
               Value: service_status
             - Name: NORMALIZED_DATA_TOPIC_PARTITION
-              Value: '3'
+              Value: '1'
             - Name: STATUS_TOPIC_PARTITION
-              Value: '3'
+              Value: '1'
             - Name: REPLICATION_FACTOR
               Value: '1'
+            - Name: LOG_LEVEL
+              Value: DEBUG
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref NormalizerServiceLogGroup
               awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: ecs
+              awslogs-stream-prefix: normalizer
+        - Name: postgres-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:5432,fork
+            - !Sub 'TCP:${DBEndpoint}:5432'
+        - Name: redis-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:6379,fork
+            - !Sub 'TCP:${RedisEndpoint}:6379'
+        - Name: kafka-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:9092,fork
+            - !Sub 'TCP:${KafkaBroker}:9092'
 
-  # Normalizer Service
   NormalizerService:
     Type: AWS::ECS::Service
     Properties:
       ServiceName: normalizer-service
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref NormalizerServiceTaskDefinition
-      DesiredCount: 3
+      DesiredCount: 1
       LaunchType: FARGATE
-      EnableExecuteCommand: true
       NetworkConfiguration:
         AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
           Subnets:
-            - Fn::ImportValue: !Sub ${ProjectName}-PublicSubnet1Id
-            - Fn::ImportValue: !Sub ${ProjectName}-PublicSubnet2Id
+            - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet1Id
+            - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet2Id
           SecurityGroups:
             - Fn::ImportValue: !Sub ${ProjectName}-ECSTasksSecurityGroupId
-          AssignPublicIp: ENABLED
 
-  # Publisher Service Task Definition
+  ##########################################
+  # PUBLISHER SERVICE
+  ##########################################
   PublisherServiceTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: publisher-service
       NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
+      RequiresCompatibilities: [FARGATE]
       Cpu: '256'
       Memory: '512'
-      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
-      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
       ContainerDefinitions:
         - Name: publisher-service
           Image: !Sub ${ECRRepositoryURL}/publisher-service:${PublisherServiceVersion}
           Essential: true
-          PortMappings:
-            - ContainerPort: 8005
-              Protocol: tcp
+          DependsOn:
+            - ContainerName: postgres-proxy
+              Condition: START
+            - ContainerName: redis-proxy
+              Condition: START
+            - ContainerName: kafka-proxy
+              Condition: START
           Environment:
-            - Name: LOG_LEVEL
-              Value: DEBUG
             - Name: DB_HOST
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBEndpoint
+              Value: localhost
             - Name: DB_PORT
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBPort
+              Value: '5432'
             - Name: DB_NAME
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-DBName
+              Value: api_service
             - Name: DB_USER
               Value: !Ref DBUsername
             - Name: DB_PASSWORD
               Value: !Ref DBPassword
+            - Name: DB_SCHEMA
+              Value: public
+            - Name: SSL_MODE
+              Value: 'true'
             - Name: REDIS_HOST
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-RedisEndpoint
+              Value: localhost
             - Name: REDIS_PORT
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-RedisPort
-            - Name: KAFKA_BOOTSTRAP_SERVERS
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: '6379'
             - Name: CONSUMER_CLUSTER
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: localhost:9092
             - Name: PRODUCER_CLUSTER
-              Value:
-                Fn::ImportValue: !Sub ${ProjectName}-BootstrapBrokersPlaintext
+              Value: localhost:9092
             - Name: NORMALIZED_DATA_TOPIC
               Value: normalized_data
-            - Name: NORMALIZED_DATA_DLQ_TOPIC
-              Value: normalized_data_dlq
             - Name: STATUS_TOPIC
               Value: service_status
             - Name: STATUS_TOPIC_PARTITION
-              Value: '3'
+              Value: '1'
             - Name: REPLICATION_FACTOR
               Value: '1'
+            - Name: LOG_LEVEL
+              Value: DEBUG
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref PublisherServiceLogGroup
               awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: ecs
+              awslogs-stream-prefix: publisher
+        - Name: postgres-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:5432,fork
+            - !Sub 'TCP:${DBEndpoint}:5432'
+        - Name: redis-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:6379,fork
+            - !Sub 'TCP:${RedisEndpoint}:6379'
+        - Name: kafka-proxy
+          Image: alpine/socat
+          Essential: false
+          Command:
+            - TCP-LISTEN:9092,fork
+            - !Sub 'TCP:${KafkaBroker}:9092'
 
-  # Publisher Service
   PublisherService:
     Type: AWS::ECS::Service
     Properties:
       ServiceName: publisher-service
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref PublisherServiceTaskDefinition
-      DesiredCount: 3
+      DesiredCount: 1
       LaunchType: FARGATE
-      EnableExecuteCommand: true
       NetworkConfiguration:
         AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
           Subnets:
-            - Fn::ImportValue: !Sub ${ProjectName}-PublicSubnet1Id
-            - Fn::ImportValue: !Sub ${ProjectName}-PublicSubnet2Id
+            - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet1Id
+            - Fn::ImportValue: !Sub ${ProjectName}-PrivateSubnet2Id
           SecurityGroups:
             - Fn::ImportValue: !Sub ${ProjectName}-ECSTasksSecurityGroupId
-          AssignPublicIp: ENABLED
-
 
 Outputs:
   ECSClusterName:
@@ -696,8 +713,6 @@ Outputs:
     Export:
       Name: !Sub ${ProjectName}-ECSClusterName
 
-  APIServiceName:
-    Description: API Service Name
-    Value: !GetAtt APIService.Name
-    Export:
-      Name: !Sub ${ProjectName}-APIServiceName
+  APIServiceDiscoveryName:
+    Description: Private DNS name for api-service service discovery
+    Value: !Sub api-service.${PrivateDnsNamespaceName}

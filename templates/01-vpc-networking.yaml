@@ -182,12 +182,11 @@ Resources:
   ECSTasksSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupName: !Sub ${ProjectName}-ecs-tasks-sg
       GroupDescription: Security group for ECS tasks
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: -1
-          CidrIp: 10.0.0.0/16
+          CidrIp: !Ref VpcCIDR
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
@@ -199,7 +198,6 @@ Resources:
   RedisSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupName: !Sub ${ProjectName}-redis-sg
       GroupDescription: Security group for ElastiCache Redis
       VpcId: !Ref VPC
       SecurityGroupIngress:
@@ -218,7 +216,6 @@ Resources:
   MSKSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupName: !Sub ${ProjectName}-msk-sg
       GroupDescription: Security group for Amazon MSK
       VpcId: !Ref VPC
       SecurityGroupIngress:
@@ -226,10 +223,17 @@ Resources:
           FromPort: 9092
           ToPort: 9092
           SourceSecurityGroupId: !Ref ECSTasksSecurityGroup
+          Description: Kafka plaintext
         - IpProtocol: tcp
-          FromPort: 2181
-          ToPort: 2181
+          FromPort: 9094
+          ToPort: 9094
           SourceSecurityGroupId: !Ref ECSTasksSecurityGroup
+          Description: Kafka TLS
+        - IpProtocol: tcp
+          FromPort: 9098
+          ToPort: 9098
+          SourceSecurityGroupId: !Ref ECSTasksSecurityGroup
+          Description: Kafka IAM authentication
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
@@ -241,7 +245,6 @@ Resources:
   RDSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupName: !Sub ${ProjectName}-rds-sg
       GroupDescription: Security group for RDS PostgreSQL
       VpcId: !Ref VPC
       SecurityGroupIngress:

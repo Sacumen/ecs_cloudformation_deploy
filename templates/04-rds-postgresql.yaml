@@ -29,7 +29,6 @@ Parameters:
   
   DBPassword:
     Type: String
-    Default: sacunxt_password
     Description: Database master password
     NoEcho: true
     MinLength: 8
@@ -75,7 +74,7 @@ Resources:
       Family: postgres15
       Parameters:
         shared_preload_libraries: pg_stat_statements
-        log_statement: all
+        log_statement: ddl
         log_min_duration_statement: 1000
       Tags:
         - Key: Name
@@ -88,7 +87,7 @@ Resources:
     Properties:
       DBInstanceIdentifier: !Sub ${ProjectName}-postgres
       Engine: postgres
-      EngineVersion: '15.4'
+      EngineVersion: '15'
       DBInstanceClass: !Ref DBInstanceClass
       AllocatedStorage: !Ref AllocatedStorage
       StorageType: gp3
@@ -107,7 +106,7 @@ Resources:
       PubliclyAccessible: false
       EnableCloudwatchLogsExports:
         - postgresql
-      DeletionProtection: false
+      DeletionProtection: true
       Tags:
         - Key: Name
           Value: !Sub ${ProjectName}-postgres
