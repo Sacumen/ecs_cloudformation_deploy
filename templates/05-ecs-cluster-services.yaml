@@ -15,9 +15,18 @@ Parameters:
     Type: String
     Description: Base ECR repository URL without the service suffix
 
+  CreateTaskExecutionRole:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Select true to create the ECS task execution role automatically
+
   TaskExecutionRoleArn:
     Type: String
-    Description: ECS task execution role ARN
+    Default: ''
+    Description: Optional existing ECS task execution role ARN when CreateTaskExecutionRole is false
 
   DBEndpoint:
     Type: String
@@ -64,10 +73,36 @@ Parameters:
     Type: String
     NoEcho: true
 
+Rules:
+  RequireTaskExecutionRoleArnWhenAutoCreateDisabled:
+    RuleCondition: !Equals [!Ref CreateTaskExecutionRole, 'false']
+    Assertions:
+      - Assert: !Not [!Equals [!Ref TaskExecutionRoleArn, '']]
+        AssertDescription: TaskExecutionRoleArn must be provided when CreateTaskExecutionRole is false
+
+Conditions:
+  HasTaskExecutionRoleArn: !Not [!Equals [!Ref TaskExecutionRoleArn, '']]
+  CreateTaskExecutionRoleCondition: !Equals [!Ref CreateTaskExecutionRole, 'true']
+
 Resources:
 
   ECSCluster:
     Type: AWS::ECS::Cluster
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: CreateTaskExecutionRoleCondition
+    Properties:
+      RoleName: !Sub ${ProjectName}-ecs-task-execution-role-${AWS::StackName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
 
   APIServiceDiscoveryNamespace:
     Type: AWS::ServiceDiscovery::PrivateDnsNamespace
@@ -137,7 +172,7 @@ Resources:
       RequiresCompatibilities: [FARGATE]
       Cpu: '256'
       Memory: '512'
-      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      ExecutionRoleArn: !If [HasTaskExecutionRoleArn, !Ref TaskExecutionRoleArn, !GetAtt ECSTaskExecutionRole.Arn]
       ContainerDefinitions:
         - Name: api-service
           Image: !Sub ${ECRRepositoryURL}/api-service:${APIServiceVersion}
@@ -227,7 +262,7 @@ Resources:
       RequiresCompatibilities: [FARGATE]
       Cpu: '256'
       Memory: '512'
-      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      ExecutionRoleArn: !If [HasTaskExecutionRoleArn, !Ref TaskExecutionRoleArn, !GetAtt ECSTaskExecutionRole.Arn]
       ContainerDefinitions:
         - Name: scheduler-service
           Image: !Sub ${ECRRepositoryURL}/scheduler-service:${SchedulerServiceVersion}
@@ -331,7 +366,7 @@ Resources:
       RequiresCompatibilities: [FARGATE]
       Cpu: '256'
       Memory: '512'
-      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      ExecutionRoleArn: !If [HasTaskExecutionRoleArn, !Ref TaskExecutionRoleArn, !GetAtt ECSTaskExecutionRole.Arn]
       ContainerDefinitions:
         - Name: config-service
           Image: !Sub ${ECRRepositoryURL}/config-service:${ConfigServiceVersion}
@@ -425,7 +460,7 @@ Resources:
       RequiresCompatibilities: [FARGATE]
       Cpu: '256'
       Memory: '512'
-      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      ExecutionRoleArn: !If [HasTaskExecutionRoleArn, !Ref TaskExecutionRoleArn, !GetAtt ECSTaskExecutionRole.Arn]
       ContainerDefinitions:
         - Name: collector-service
           Image: !Sub ${ECRRepositoryURL}/collector-service:${CollectorServiceVersion}
@@ -531,7 +566,7 @@ Resources:
       RequiresCompatibilities: [FARGATE]
       Cpu: '256'
       Memory: '512'
-      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      ExecutionRoleArn: !If [HasTaskExecutionRoleArn, !Ref TaskExecutionRoleArn, !GetAtt ECSTaskExecutionRole.Arn]
       ContainerDefinitions:
         - Name: normalizer-service
           Image: !Sub ${ECRRepositoryURL}/normalizer-service:${NormalizerServiceVersion}
@@ -619,7 +654,7 @@ Resources:
       RequiresCompatibilities: [FARGATE]
       Cpu: '256'
       Memory: '512'
-      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      ExecutionRoleArn: !If [HasTaskExecutionRoleArn, !Ref TaskExecutionRoleArn, !GetAtt ECSTaskExecutionRole.Arn]
       ContainerDefinitions:
         - Name: publisher-service
           Image: !Sub ${ECRRepositoryURL}/publisher-service:${PublisherServiceVersion}
@@ -712,6 +747,10 @@ Outputs:
     Value: !Ref ECSCluster
     Export:
       Name: !Sub ${ProjectName}-ECSClusterName
+
+  EffectiveTaskExecutionRoleArn:
+    Description: ECS task execution role ARN used by the services
+    Value: !If [HasTaskExecutionRoleArn, !Ref TaskExecutionRoleArn, !GetAtt ECSTaskExecutionRole.Arn]
 
   APIServiceDiscoveryName:
     Description: Private DNS name for api-service service discovery
