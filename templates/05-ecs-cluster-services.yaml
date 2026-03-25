@@ -15,18 +15,10 @@ Parameters:
     Type: String
     Description: Base ECR repository URL without the service suffix
 
-  CreateTaskExecutionRole:
-    Type: String
-    Default: 'true'
-    AllowedValues:
-      - 'true'
-      - 'false'
-    Description: Select true to create the ECS task execution role automatically
-
   TaskExecutionRoleArn:
     Type: String
     Default: ''
-    Description: Optional existing ECS task execution role ARN when CreateTaskExecutionRole is false
+    Description: ECS task execution role ARN
 
   DBEndpoint:
     Type: String
@@ -73,16 +65,9 @@ Parameters:
     Type: String
     NoEcho: true
 
-Rules:
-  RequireTaskExecutionRoleArnWhenAutoCreateDisabled:
-    RuleCondition: !Equals [!Ref CreateTaskExecutionRole, 'false']
-    Assertions:
-      - Assert: !Not [!Equals [!Ref TaskExecutionRoleArn, '']]
-        AssertDescription: TaskExecutionRoleArn must be provided when CreateTaskExecutionRole is false
-
 Conditions:
   HasTaskExecutionRoleArn: !Not [!Equals [!Ref TaskExecutionRoleArn, '']]
-  CreateTaskExecutionRoleCondition: !Equals [!Ref CreateTaskExecutionRole, 'true']
+  CreateTaskExecutionRole: !Equals [!Ref TaskExecutionRoleArn, '']
 
 Resources:
 
@@ -91,7 +76,7 @@ Resources:
 
   ECSTaskExecutionRole:
     Type: AWS::IAM::Role
-    Condition: CreateTaskExecutionRoleCondition
+    Condition: CreateTaskExecutionRole
     Properties:
       RoleName: !Sub ${ProjectName}-ecs-task-execution-role-${AWS::StackName}
       AssumeRolePolicyDocument:
@@ -304,7 +289,7 @@ Resources:
             - Name: RESULT_TOPIC
               Value: results
             - Name: JOBS_TOPIC_PARTITION
-              Value: '1'
+              Value: '3'
             - Name: RESULT_TOPIC_PARTITION
               Value: '1'
             - Name: REPLICATION_FACTOR
@@ -344,7 +329,7 @@ Resources:
       ServiceName: scheduler-service
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref SchedulerServiceTaskDefinition
-      DesiredCount: 1
+      DesiredCount: 3
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
@@ -504,7 +489,7 @@ Resources:
             - Name: STATUS_TOPIC
               Value: service_status
             - Name: RAW_DATA_TOPIC_PARTITION
-              Value: '1'
+              Value: '3'
             - Name: STATUS_TOPIC_PARTITION
               Value: '1'
             - Name: REPLICATION_FACTOR
@@ -544,7 +529,7 @@ Resources:
       ServiceName: collector-service
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref CollectorServiceTaskDefinition
-      DesiredCount: 1
+      DesiredCount: 3
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
@@ -594,7 +579,7 @@ Resources:
             - Name: STATUS_TOPIC
               Value: service_status
             - Name: NORMALIZED_DATA_TOPIC_PARTITION
-              Value: '1'
+              Value: '3'
             - Name: STATUS_TOPIC_PARTITION
               Value: '1'
             - Name: REPLICATION_FACTOR
@@ -632,7 +617,7 @@ Resources:
       ServiceName: normalizer-service
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref NormalizerServiceTaskDefinition
-      DesiredCount: 1
+      DesiredCount: 3
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
@@ -730,7 +715,7 @@ Resources:
       ServiceName: publisher-service
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref PublisherServiceTaskDefinition
-      DesiredCount: 1
+      DesiredCount: 3
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
