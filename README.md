@@ -15,7 +15,7 @@ The deployment creates a complete microservices infrastructure using AWS CloudFo
 - **ECS Fargate Cluster**: Serverless container orchestration
 - **CloudWatch Logs**: Centralized logging for all services
 - **Service Discovery**: AWS CloudMap for service-to-service communication
-- **IAM Roles**: Least-privilege security for ECS tasks
+- **IAM Roles**: Least-privilege security for ECS tasks with auto-creation option
 
 ### Microservices Deployed
 
@@ -25,6 +25,14 @@ The deployment creates a complete microservices infrastructure using AWS CloudFo
 4. **Collector Service** (Port 8003) - Data collection and ingestion
 5. **Normalizer Service** (Port 8004) - Data normalization
 6. **Publisher Service** (Port 8005) - Data publishing
+
+### Key Features
+
+- **Automated IAM Role Management**: Option to create ECS task execution role automatically
+- **Cross-Account ECR Replication**: Support for cross-account image replication
+- **Enhanced Logging**: Stack-specific log groups with proper naming
+- **Service Discovery Integration**: AWS CloudMap for internal service communication
+- **Infrastructure as Code**: Complete CloudFormation-based deployment
 
 ## 📋 Prerequisites
 
@@ -199,13 +207,44 @@ Each template accepts parameters for customization:
 #### ECS Template (05-ecs-cluster-services.yaml)
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `ECRRepositoryURL` | `102716399460.dkr.ecr.ap-south-1.amazonaws.com/sacunxt` | ECR URL |
+| `CreateTaskExecutionRole` | `true` | Auto-create ECS task execution role |
+| `TaskExecutionRoleArn` | `''` | Existing role ARN when auto-creation disabled |
+| `ECRRepositoryURL` | `<your-ecr-url>` | ECR URL |
 | `APIServiceVersion` | `2.3.4` | API service version |
 | `SchedulerServiceVersion` | `2.3.4` | Scheduler version |
 | `ConfigServiceVersion` | `2.3.2` | Config version |
 | `CollectorServiceVersion` | `2.3.13` | Collector version |
 | `NormalizerServiceVersion` | `2.3.7` | Normalizer version |
 | `PublisherServiceVersion` | `2.3.10` | Publisher version |
+
+### IAM Role Management
+
+The ECS template now supports two modes:
+
+#### Mode 1: Automatic Role Creation (Default)
+```bash
+aws cloudformation deploy \
+  --template-file templates/05-ecs-cluster-services.yaml \
+  --stack-name sacunxt-ecs-services \
+  --parameter-overrides \
+    ProjectName=sacunxt \
+    CreateTaskExecutionRole=true \
+    DBUsername=sacunxt \
+    DBPassword=your_secure_password
+```
+
+#### Mode 2: Use Existing Role
+```bash
+aws cloudformation deploy \
+  --template-file templates/05-ecs-cluster-services.yaml \
+  --stack-name sacunxt-ecs-services \
+  --parameter-overrides \
+    ProjectName=sacunxt \
+    CreateTaskExecutionRole=false \
+    TaskExecutionRoleArn=arn:aws:iam::ACCOUNT:role/your-existing-role \
+    DBUsername=sacunxt \
+    DBPassword=your_secure_password
+```
 
 ### Updating Service Versions
 
@@ -235,7 +274,7 @@ After deployment, services are accessible via:
 
 | Service | Endpoint | Port |
 |---------|----------|------|
-| API Service | `api-service.sacunxt-cluster` | 8000 |
+| API Service | `api-service.sacunxt.local` | 8000 |
 | PostgreSQL | From RDS stack output | 5432 |
 | Redis | From ElastiCache stack output | 6379 |
 | Kafka | From MSK stack output | 9092 |
@@ -259,6 +298,12 @@ aws cloudformation describe-stacks \
 aws cloudformation describe-stacks \
   --stack-name sacunxt-msk-kafka \
   --query "Stacks[0].Outputs[?OutputKey=='BootstrapBrokersPlaintext'].OutputValue" \
+  --output text
+
+# ECS Cluster Name
+aws cloudformation describe-stacks \
+  --stack-name sacunxt-ecs-services \
+  --query "Stacks[0].Outputs[?OutputKey=='ECSClusterName'].OutputValue" \
   --output text
 ```
 
@@ -344,18 +389,9 @@ aws cloudformation deploy \
 
 ECS services automatically perform rolling updates when task definitions change.
 
-### Backup and Recovery
-
-- **RDS**: Automated backups enabled (7-day retention)
-- **ElastiCache**: Automated snapshots enabled (5-day retention)
-- **MSK**: Data persisted on EBS volumes
-
 ## 🧹 Cleanup
 
 ### Remove All Resources
-
-**Via GitHub Actions:**
-1. Run workflow with action: `delete`
 
 **Via AWS CLI:**
 ```bash
@@ -415,15 +451,16 @@ Logs are organized by service:
 - Separate execution and task roles
 - Least-privilege policies
 - No hardcoded credentials
+- Conditional IAM role creation with validation
 
 ### Secrets Management
 - Database credentials passed via parameters
 - Sensitive parameters marked with `NoEcho`
 - Use AWS Secrets Manager for production
 
-## 💰 Cost Optimization
+##  Cost Optimization
 
-### Estimated Monthly Costs (us-east-2)
+### Estimated Monthly Costs
 
 | Service | Configuration | Estimated Cost |
 |---------|--------------|----------------|
@@ -441,24 +478,7 @@ Logs are organized by service:
 - Enable auto-scaling for ECS services
 - Delete unused resources
 
-## 📞 Support
-
-For deployment issues:
-1. Check CloudFormation stack events
-2. Review CloudWatch logs
-3. Verify AWS resource status in console
-4. Consult troubleshooting section above
-
-## 📝 Additional Resources
-
-- [AWS CloudFormation Documentation](https://docs.aws.amazon.com/cloudformation/)
-- [Amazon ECS Documentation](https://docs.aws.amazon.com/ecs/)
-- [Amazon RDS Documentation](https://docs.aws.amazon.com/rds/)
-- [Amazon ElastiCache Documentation](https://docs.aws.amazon.com/elasticache/)
-- [Amazon MSK Documentation](https://docs.aws.amazon.com/msk/)
-- [AWS CloudMap Documentation](https://docs.aws.amazon.com/cloudmap/)
-
-## 🔄 Migration from Terraform
+##  Migration from Terraform
 
 This repository replaces the Terraform-based deployment with the following key differences:
 
@@ -469,6 +489,9 @@ This repository replaces the Terraform-based deployment with the following key d
 | PostgreSQL | Self-hosted on ECS | Amazon RDS (Managed) |
 | Deployment Tool | Terraform | CloudFormation |
 | State Management | Terraform state file | AWS CloudFormation |
+| IAM Roles | Manual creation | Auto-creation option |
+| Logging | Basic | Stack-specific log groups |
+| Service Discovery | Basic | AWS CloudMap integration |
 
 ### Benefits of AWS-Managed Services
 - ✅ Automated backups and snapshots
@@ -477,3 +500,26 @@ This repository replaces the Terraform-based deployment with the following key d
 - ✅ Built-in monitoring and metrics
 - ✅ Reduced operational overhead
 - ✅ Better scalability options
+- ✅ Enhanced security features
+
+## 📋 Quick Reference
+
+### Stack Dependencies
+```
+VPC Networking → RDS PostgreSQL → ElastiCache Redis → MSK Kafka → ECS Services
+```
+
+### Common Commands
+```bash
+# Check stack status
+aws cloudformation list-stacks --query "StackSummaries[?StackStatus=='CREATE_COMPLETE']"
+
+# Get all outputs
+aws cloudformation describe-stacks --stack-name sacunxt-ecs-services --query "Stacks[0].Outputs"
+```
+
+---
+
+**Last Updated**: March 2026  
+**Version**: 2.0  
+**Maintained by**: SacuNxt DevOps Team
