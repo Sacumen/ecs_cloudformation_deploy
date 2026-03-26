@@ -285,20 +285,20 @@ After deployment, services are accessible via:
 # PostgreSQL
 aws cloudformation describe-stacks \
   --stack-name sacunxt-rds-postgresql \
-  --query "Stacks[0].Outputs[?OutputKey=='DBConnectionString'].OutputValue" \
+  --query "Stacks[0].Outputs[?OutputKey=='DBHostname'].OutputValue" \
   --output text
 
 # Redis
 aws cloudformation describe-stacks \
   --stack-name sacunxt-elasticache-redis \
-  --query "Stacks[0].Outputs[?OutputKey=='RedisConnectionString'].OutputValue" \
+  --query "Stacks[0].Outputs[?OutputKey=='RedisHostname'].OutputValue" \
   --output text
 
 # Kafka
 aws cloudformation describe-stacks \
   --stack-name sacunxt-msk-kafka \
   --query "Stacks[0].Outputs[?OutputKey=='BootstrapBrokersPlaintext'].OutputValue" \
-  --output text
+  --output text | cut -d ',' -f 1
 
 # ECS Cluster Name
 aws cloudformation describe-stacks \

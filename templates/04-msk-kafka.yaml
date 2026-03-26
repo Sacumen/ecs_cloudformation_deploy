@@ -34,7 +34,7 @@ Resources:
         - !Ref KafkaVersion
       ServerProperties: |
         auto.create.topics.enable=true
-        num.partitions=1
+        num.partitions=3
 
   MSKCluster:
     Type: AWS::MSK::Cluster

@@ -22,15 +22,21 @@ Parameters:
 
   DBEndpoint:
     Type: String
-    Description: RDS endpoint
+    AllowedPattern: '^[^,:/\s]+$'
+    ConstraintDescription: Provide only the RDS endpoint hostname without port or protocol
+    Description: RDS endpoint hostname only without port
 
   RedisEndpoint:
     Type: String
-    Description: Redis endpoint
+    AllowedPattern: '^[^,:/\s]+$'
+    ConstraintDescription: Provide only the Redis endpoint hostname without port or protocol
+    Description: Redis endpoint hostname only without port
 
   KafkaBroker:
     Type: String
-    Description: Single MSK broker hostname without port (for example b-1.sacunxtmskcluster.91w189.c21.kafka.us-east-1.amazonaws.com)
+    AllowedPattern: '^[^,:/\s]+$'
+    ConstraintDescription: Provide only one MSK broker hostname without port or comma-separated brokers
+    Description: Single plaintext MSK broker hostname only without port and without comma-separated bootstrap list (for example b-1.sacunxtmskcluster.91w189.c21.kafka.us-east-1.amazonaws.com)
   
   APIServiceVersion:
     Type: String
@@ -58,7 +64,6 @@ Parameters:
   
   DBUsername:
     Type: String
-    Default: sacunxt
     NoEcho: true
   
   DBPassword:
